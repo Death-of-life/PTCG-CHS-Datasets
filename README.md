@@ -2,9 +2,88 @@
 
 # PTCG-CHS-Datasets
 
+Repository: [Death-of-life/PTCG-CHS-Datasets](https://github.com/Death-of-life/PTCG-CHS-Datasets)
+
 A dataset of Pokémon Trading Card Game cards of Simplified Chinese version.
 
 There's a JSON dataset containing information about each card in every collection, as well as their card descriptions and images. If you encounter any issues, please submit an issue so that I am aware of them and can make improvements.
+
+## Clone
+
+```bash
+git clone https://github.com/Death-of-life/PTCG-CHS-Datasets.git
+cd PTCG-CHS-Datasets
+```
+
+## Web App
+
+This repository now includes a Next.js web app backed by SQLite instead of loading the full JSON file into memory on every request.
+
+### Features
+
+- JSON import into SQLite with Drizzle schema
+- Full-text and fallback substring search
+- Multi-select filters with same-group OR and cross-group AND semantics
+- Separate `/cards` database browser and `/decks` deck builder pages
+- OpenAPI document and Swagger UI at `/api/docs`
+- Card image streaming API for external software
+
+### Getting Started
+
+```bash
+npm install
+npm run db:import
+npm run dev
+```
+
+Open:
+
+- `http://localhost:3000/cards`
+- `http://localhost:3000/decks`
+- `http://localhost:3000/api/docs`
+
+If `data/ptcg.sqlite` does not exist, the app will lazily build it on first request, but running `npm run db:import` first is recommended.
+
+### Sync Upstream Data
+
+If the upstream Git repository adds new `ptcg_chs_infos.json` content or new images under `img/`, run:
+
+```bash
+npm run data:sync
+```
+
+This command will:
+
+1. fetch the latest `origin/main`
+2. update only `ptcg_chs_infos.json` and `img/`
+3. rebuild `data/ptcg.sqlite`
+
+You can override the source with:
+
+```bash
+PTCG_SYNC_REMOTE=origin PTCG_SYNC_BRANCH=main npm run data:sync
+```
+
+If there are local uncommitted changes in `ptcg_chs_infos.json` or `img/`, the sync command will stop instead of overwriting them.
+
+### API
+
+Primary API:
+
+- `GET /api/v1/cards`
+- `GET /api/v1/cards/:id`
+- `GET /api/v1/cards/:id/image`
+- `GET /api/v1/filters`
+- `POST /api/v1/decks/validate`
+- `GET /api/openapi.json`
+
+Multi-select query params use repeated keys:
+
+```bash
+curl "http://localhost:3000/api/v1/cards?q=喷火龙&regulationMark[]=G&regulationMark[]=H&attribute[]=2&page=1&pageSize=12"
+```
+
+The complete machine-readable contract is available at `/api/openapi.json`, and the interactive documentation is available at `/api/docs`.
 
 ## DISCLAIMER FOR USAGE OF PTCG-CHS-Datasets
 

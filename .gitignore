@@ -1,1 +1,7 @@
 .idea/
+node_modules/
+.next/
+data/
+.DS_Store
+.codex/
+database.zip

@@ -1,0 +1,95 @@
+.page {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.hero {
+  padding: 24px;
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(255, 248, 239, 0.96), rgba(255, 240, 221, 0.82));
+  box-shadow: var(--shadow);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.hero h1 {
+  margin: 0 0 8px;
+}
+
+.hero p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.section {
+  display: grid;
+  gap: 18px;
+}
+
+.card {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.card h2 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.methods {
+  display: grid;
+  gap: 16px;
+}
+
+.methodBlock {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.methodHeader {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.method {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.list li {
+  margin: 6px 0;
+}
+
+.methodBlock h3 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+}
