@@ -4,6 +4,8 @@ import { mkdir, readFile } from "node:fs/promises";
 import { getSqlite } from "@/lib/db/connection";
 import { dataDirPath, sourceJsonPath, sqlitePath } from "@/lib/db/paths";
 
+const R2_PUBLIC_BASE_URL = "https://pub-a275b3fdda064fe5a8c45a3a5afb1266.r2.dev";
+
 type RawDictItem = {
   id: number;
   typeCode: string;
@@ -89,6 +91,11 @@ let ensurePromise: Promise<void> | null = null;
 
 function sanitizeImagePath(image: string | undefined) {
   return (image ?? "").replaceAll("\\", "/").replace(/^\/+/, "");
+}
+
+function buildCardImageUrlFromPath(imagePath: string | undefined) {
+  const relativePath = sanitizeImagePath(imagePath).replace(/^img\//, "");
+  return relativePath ? `${R2_PUBLIC_BASE_URL}/${relativePath}` : "";
 }
 
 function normalizeText(value: string | undefined | null) {
@@ -381,7 +388,7 @@ export async function importJsonToSqlite() {
             parseNumericCollectionNumber(details.collectionNumber),
             details.commodityCode ?? rawCard.commodityCode ?? null,
             imagePath,
-            `/api/v1/cards/${rawCard.id}/image`,
+            buildCardImageUrlFromPath(imagePath),
             rawCard.hash ?? null,
             cardTypeCode,
             details.cardTypeText ?? dictMaps.cardType.get(cardTypeCode) ?? cardTypeCode,

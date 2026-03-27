@@ -3,6 +3,8 @@ import path from "node:path";
 import { ensureDatabaseReady } from "@/lib/db/importer";
 import { getSqlite } from "@/lib/db/connection";
 
+const R2_PUBLIC_BASE_URL = "https://pub-a275b3fdda064fe5a8c45a3a5afb1266.r2.dev";
+
 export type FilterOption = {
   code: string;
   label: string;
@@ -152,11 +154,20 @@ async function readyDb() {
   return getSqlite();
 }
 
+export function buildCardImageUrlFromPath(imagePath: string | null | undefined) {
+  const normalizedPath = (imagePath ?? "").replaceAll("\\", "/").replace(/^\/+/, "");
+  const relativePath = normalizedPath.replace(/^img\//, "");
+  return relativePath ? `${R2_PUBLIC_BASE_URL}/${relativePath}` : "";
+}
+
 function mapCardListRow(row: Record<string, RowValue>) {
+  const imagePath = (row.image_path as string | null) ?? null;
+  const imageUrl = buildCardImageUrlFromPath(imagePath) || String(row.image_url ?? "");
+
   return {
     id: Number(row.id),
     name: String(row.name),
-    imageUrl: String(row.image_url),
+    imageUrl,
     collectionNumber: String(row.collection_number),
     collectionName: String(row.collection_name),
     collectionId: Number(row.collection_id),
