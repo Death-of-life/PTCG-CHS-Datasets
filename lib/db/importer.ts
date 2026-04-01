@@ -133,6 +133,68 @@ function splitCodeList(value: string | null | undefined) {
   return normalizeText(value).split("|").map((part) => part.trim()).filter(Boolean);
 }
 
+function toStableJson(value: unknown) {
+  return JSON.stringify(value);
+}
+
+function buildLogicalFingerprint(input: {
+  cardTypeCode: string;
+  name: string;
+  yorenCode: string | null;
+  trainerTypeCode: string | null;
+  energyTypeCode: string | null;
+  pokemonTypeCode: string | null;
+  specialCardCode: string | null;
+  attributeCode: string | null;
+  hp: number | null;
+  evolveText: string | null;
+  ruleText: string;
+  weakness: string | null;
+  resistance: string | null;
+  retreatCost: number | null;
+  attacks: Array<{ name: string; text: string; cost: string[]; damage: string | null }>;
+  features: Array<{ name: string; text: string }>;
+}) {
+  if (input.cardTypeCode === "2") {
+    return `trainer::${input.name}`;
+  }
+
+  if (input.cardTypeCode === "1") {
+    return `pokemon::${toStableJson({
+      name: input.name,
+      pokemonTypeCode: input.pokemonTypeCode,
+      specialCardCode: input.specialCardCode,
+      attributeCode: input.attributeCode,
+      hp: input.hp,
+      evolveText: input.evolveText,
+      ruleText: input.ruleText,
+      weakness: input.weakness,
+      resistance: input.resistance,
+      retreatCost: input.retreatCost,
+      attacks: input.attacks,
+      features: input.features,
+    })}`;
+  }
+
+  return `${input.cardTypeCode}::${toStableJson({
+    name: input.name,
+    yorenCode: input.yorenCode,
+    trainerTypeCode: input.trainerTypeCode,
+    energyTypeCode: input.energyTypeCode,
+    pokemonTypeCode: input.pokemonTypeCode,
+    specialCardCode: input.specialCardCode,
+    attributeCode: input.attributeCode,
+    hp: input.hp,
+    evolveText: input.evolveText,
+    ruleText: input.ruleText,
+    weakness: input.weakness,
+    resistance: input.resistance,
+    retreatCost: input.retreatCost,
+    attacks: input.attacks,
+    features: input.features,
+  })}`;
+}
+
 function makeDictMap(items: RawDictItem[] = []) {
   return new Map(items.map((item) => [item.dictCode, item.dictValue]));
 }
@@ -164,6 +226,7 @@ function createTables(db: ReturnType<typeof getSqlite>) {
     DROP TABLE IF EXISTS card_features;
     DROP TABLE IF EXISTS card_attacks;
     DROP TABLE IF EXISTS card_collections;
+    DROP TABLE IF EXISTS card_printings;
     DROP TABLE IF EXISTS cards;
     DROP TABLE IF EXISTS collections;
     DROP TABLE IF EXISTS dict_entries;
@@ -176,14 +239,9 @@ function createTables(db: ReturnType<typeof getSqlite>) {
     );
     CREATE TABLE cards (
       id INTEGER PRIMARY KEY NOT NULL,
+      fingerprint TEXT NOT NULL,
       name TEXT NOT NULL,
       yoren_code TEXT,
-      collection_number TEXT NOT NULL,
-      collection_number_numeric INTEGER,
-      commodity_code TEXT,
-      image_path TEXT NOT NULL,
-      image_url TEXT NOT NULL,
-      hash TEXT,
       card_type_code TEXT NOT NULL,
       card_type_label TEXT NOT NULL,
       trainer_type_code TEXT,
@@ -212,11 +270,28 @@ function createTables(db: ReturnType<typeof getSqlite>) {
       weight REAL,
       illustrators_json TEXT NOT NULL,
       search_text TEXT NOT NULL,
-      deck_rule_limit INTEGER
+      deck_rule_limit INTEGER,
+      default_printing_id INTEGER,
+      default_image_url TEXT,
+      sort_collection_number TEXT,
+      sort_collection_number_numeric INTEGER
+    );
+    CREATE TABLE card_printings (
+      id INTEGER PRIMARY KEY NOT NULL,
+      card_id INTEGER NOT NULL,
+      commodity_code TEXT,
+      image_path TEXT NOT NULL,
+      image_url TEXT NOT NULL,
+      hash TEXT,
+      collection_number TEXT NOT NULL,
+      collection_number_numeric INTEGER,
+      regulation_mark TEXT,
+      rarity_code TEXT,
+      rarity_label TEXT
     );
     CREATE TABLE card_collections (
       id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-      card_id INTEGER NOT NULL,
+      printing_id INTEGER NOT NULL,
       collection_id INTEGER NOT NULL,
       commodity_code TEXT,
       commodity_name TEXT NOT NULL
@@ -256,13 +331,17 @@ function createTables(db: ReturnType<typeof getSqlite>) {
       pokedex_text,
       tokenize = 'unicode61'
     );
+    CREATE UNIQUE INDEX cards_fingerprint_idx ON cards(fingerprint);
     CREATE INDEX cards_name_idx ON cards(name);
     CREATE INDEX cards_type_idx ON cards(card_type_code);
     CREATE INDEX cards_attribute_idx ON cards(attribute_code);
-    CREATE INDEX cards_regulation_idx ON cards(regulation_mark);
-    CREATE INDEX cards_collection_number_idx ON cards(collection_number_numeric);
-    CREATE INDEX card_collections_card_idx ON card_collections(card_id);
-    CREATE UNIQUE INDEX card_collections_unique_idx ON card_collections(card_id, collection_id, commodity_code);
+    CREATE INDEX cards_sort_collection_number_idx ON cards(sort_collection_number_numeric);
+    CREATE INDEX card_printings_card_idx ON card_printings(card_id);
+    CREATE INDEX card_printings_regulation_idx ON card_printings(regulation_mark);
+    CREATE INDEX card_printings_rarity_idx ON card_printings(rarity_code);
+    CREATE INDEX card_collections_printing_idx ON card_collections(printing_id);
+    CREATE INDEX card_collections_collection_idx ON card_collections(collection_id);
+    CREATE UNIQUE INDEX card_collections_unique_idx ON card_collections(printing_id, collection_id, commodity_code);
     CREATE INDEX card_attacks_card_idx ON card_attacks(card_id);
     CREATE INDEX card_features_card_idx ON card_features(card_id);
     CREATE INDEX dict_entries_type_sort_idx ON dict_entries(type_code, dict_sort);
@@ -271,17 +350,19 @@ function createTables(db: ReturnType<typeof getSqlite>) {
     SELECT
       cards.*,
       COALESCE((
-        SELECT card_collections.collection_id
-        FROM card_collections
-        WHERE card_collections.card_id = cards.id
-        ORDER BY card_collections.id ASC
+        SELECT cc.collection_id
+        FROM card_printings cp
+        JOIN card_collections cc ON cc.printing_id = cp.id
+        WHERE cp.card_id = cards.id
+        ORDER BY cc.id ASC
         LIMIT 1
       ), 0) AS collection_id,
       COALESCE((
-        SELECT card_collections.commodity_name
-        FROM card_collections
-        WHERE card_collections.card_id = cards.id
-        ORDER BY card_collections.id ASC
+        SELECT cc.commodity_name
+        FROM card_printings cp
+        JOIN card_collections cc ON cc.printing_id = cp.id
+        WHERE cp.card_id = cards.id
+        ORDER BY cc.id ASC
         LIMIT 1
       ), '') AS collection_name
     FROM cards;
@@ -310,15 +391,21 @@ export async function importJsonToSqlite() {
   const insertCollection = db.prepare("INSERT INTO collections (id, name, commodity_code, sales_date) VALUES (?, ?, ?, ?)");
   const insertCard = db.prepare(`
     INSERT INTO cards (
-      id, name, yoren_code, collection_number, collection_number_numeric, commodity_code, image_path, image_url, hash,
-      card_type_code, card_type_label, trainer_type_code, trainer_type_label, energy_type_code, energy_type_label,
+      id, fingerprint, name, yoren_code, card_type_code, card_type_label, trainer_type_code, trainer_type_label, energy_type_code, energy_type_label,
       pokemon_type_code, pokemon_type_label, special_card_code, special_card_label, attribute_code, attribute_label,
-      regulation_mark, rarity_code, rarity_label, hp, evolve_text, rule_text, weakness, resistance, retreat_cost,
-      pokemon_category, pokedex_code, pokedex_text, height, weight, illustrators_json, search_text, deck_rule_limit
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      hp, evolve_text, rule_text, weakness, resistance, retreat_cost,
+      pokemon_category, pokedex_code, pokedex_text, height, weight, illustrators_json, search_text, deck_rule_limit,
+      default_printing_id, default_image_url, sort_collection_number, sort_collection_number_numeric
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertCardPrinting = db.prepare(`
+    INSERT INTO card_printings (
+      id, card_id, commodity_code, image_path, image_url, hash, collection_number, collection_number_numeric,
+      regulation_mark, rarity_code, rarity_label
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertCardCollection = db.prepare(
-    "INSERT INTO card_collections (card_id, collection_id, commodity_code, commodity_name) VALUES (?, ?, ?, ?)",
+    "INSERT INTO card_collections (printing_id, collection_id, commodity_code, commodity_name) VALUES (?, ?, ?, ?)",
   );
   const insertAttack = db.prepare(
     "INSERT INTO card_attacks (card_id, sort_order, name, text, cost_json, damage) VALUES (?, ?, ?, ?, ?, ?)",
@@ -336,7 +423,8 @@ export async function importJsonToSqlite() {
   `);
 
   const transaction = db.transaction(() => {
-    const insertedCardIds = new Set<number>();
+    const logicalCardIdByFingerprint = new Map<string, number>();
+    const insertedPrintingIds = new Set<number>();
 
     for (const collection of parsed.collections) {
       insertCollection.run(collection.id, collection.name, collection.commodityCode, collection.salesDate ?? null);
@@ -359,74 +447,102 @@ export async function importJsonToSqlite() {
           ).values(),
         );
 
-        if (!insertedCardIds.has(rawCard.id)) {
-          insertedCardIds.add(rawCard.id);
+        const name = rawCard.name ?? details.cardName ?? "未知卡牌";
+        const cardTypeCode = details.cardType ?? rawCard.cardType ?? "";
+        const trainerTypeCode = details.trainerType ?? rawCard.trainerType ?? null;
+        const energyTypeCode = details.energyType ?? rawCard.energyType ?? null;
+        const pokemonTypeCode = details.pokemonType ?? rawCard.pokemonType ?? null;
+        const specialCardCode = details.specialCard ?? rawCard.specialCard ?? null;
+        const specialCardCodes = splitCodeList(specialCardCode);
+        const attributeCode = details.attribute ?? null;
+        const pokemonTypeLabel = pokemonTypeCode ? (dictMaps.pokemonType.get(pokemonTypeCode) ?? pokemonTypeCode) : null;
+        const specialCardLabel = specialCardCode ? (dictMaps.specialCard.get(specialCardCode) ?? specialCardCode) : null;
+        const imagePath = sanitizeImagePath(rawCard.image);
+        const ruleText = splitRuleText(details.ruleText).join("\n");
+        const weakness =
+          details.weaknessType && details.weaknessFormula
+            ? `${dictMaps.weaknessType.get(details.weaknessType) ?? details.weaknessType} ${details.weaknessFormula}`
+            : null;
+        const resistance =
+          details.resistanceType && details.resistanceFormula
+            ? `${dictMaps.resistanceType.get(details.resistanceType) ?? details.resistanceType} ${details.resistanceFormula}`
+            : null;
+        const attacks = [
+          ...(details.abilityItemList ?? []).map((item) => ({
+            name: item.abilityName ?? "未命名招式",
+            text: item.abilityText === "none" ? "" : normalizeText(item.abilityText),
+            cost: parseAbilityCostCodes(item.abilityCost, dictMaps.abilityCost),
+            damage: item.abilityDamage === "none" ? null : item.abilityDamage ?? null,
+          })),
+          ...((details.skills ?? [])
+            .filter((item) => item?.type === "ability")
+            .map((item) => ({
+              name: item.name ?? "未命名招式",
+              text: normalizeText(item.desc),
+              cost: parseAbilityCostCodes(item.cost, dictMaps.abilityCost),
+              damage:
+                item.damage === undefined || item.damage === null || item.damage === "none"
+                  ? null
+                  : String(item.damage),
+            }))),
+        ].filter(
+          (item, index, array) =>
+            array.findIndex(
+              (candidate) =>
+                candidate.name === item.name &&
+                candidate.text === item.text &&
+                candidate.damage === item.damage &&
+                candidate.cost.join(",") === item.cost.join(","),
+            ) === index,
+        );
+        const features = [
+          ...(details.cardFeatureItemList ?? []).map((item) => ({
+            name: item.featureName ?? "特性",
+            text: normalizeText(item.featureDesc),
+          })),
+          ...((details.skills ?? [])
+            .filter((item) => item?.type === "feature")
+            .map((item) => ({
+              name: item.name ?? "特性",
+              text: normalizeText(item.desc),
+            }))),
+          ...(cardTypeCode === "1" && specialCardCodes.includes("6")
+            ? [
+                {
+                  name: "太晶规则",
+                  text: "只要这只宝可梦处于备战区，就不会受到招式的伤害。",
+                },
+              ]
+            : []),
+        ].filter(
+          (item, index, array) =>
+            array.findIndex(
+              (candidate) => candidate.name === item.name && candidate.text === item.text,
+            ) === index,
+        );
+        const fingerprint = buildLogicalFingerprint({
+          cardTypeCode,
+          name,
+          yorenCode: rawCard.yorenCode ?? null,
+          trainerTypeCode,
+          energyTypeCode,
+          pokemonTypeCode,
+          specialCardCode,
+          attributeCode,
+          hp: details.hp ?? null,
+          evolveText: details.evolveText ?? null,
+          ruleText,
+          weakness,
+          resistance,
+          retreatCost: details.retreatCost ?? null,
+          attacks,
+          features,
+        });
+        const logicalCardId = logicalCardIdByFingerprint.get(fingerprint) ?? rawCard.id;
 
-          const name = rawCard.name ?? details.cardName ?? "未知卡牌";
-          const cardTypeCode = details.cardType ?? rawCard.cardType ?? "";
-          const trainerTypeCode = details.trainerType ?? rawCard.trainerType ?? null;
-          const energyTypeCode = details.energyType ?? rawCard.energyType ?? null;
-          const pokemonTypeCode = details.pokemonType ?? rawCard.pokemonType ?? null;
-          const specialCardCode = details.specialCard ?? rawCard.specialCard ?? null;
-          const specialCardCodes = splitCodeList(specialCardCode);
-          const attributeCode = details.attribute ?? null;
-          const pokemonTypeLabel = pokemonTypeCode ? (dictMaps.pokemonType.get(pokemonTypeCode) ?? pokemonTypeCode) : null;
-          const specialCardLabel = specialCardCode ? (dictMaps.specialCard.get(specialCardCode) ?? specialCardCode) : null;
-          const imagePath = sanitizeImagePath(rawCard.image);
-          const ruleText = splitRuleText(details.ruleText).join("\n");
-          const attacks = [
-            ...(details.abilityItemList ?? []).map((item) => ({
-              name: item.abilityName ?? "未命名招式",
-              text: item.abilityText === "none" ? "" : normalizeText(item.abilityText),
-              cost: parseAbilityCostCodes(item.abilityCost, dictMaps.abilityCost),
-              damage: item.abilityDamage === "none" ? null : item.abilityDamage ?? null,
-            })),
-            ...((details.skills ?? [])
-              .filter((item) => item?.type === "ability")
-              .map((item) => ({
-                name: item.name ?? "未命名招式",
-                text: normalizeText(item.desc),
-                cost: parseAbilityCostCodes(item.cost, dictMaps.abilityCost),
-                damage:
-                  item.damage === undefined || item.damage === null || item.damage === "none"
-                    ? null
-                    : String(item.damage),
-              }))),
-          ].filter(
-            (item, index, array) =>
-              array.findIndex(
-                (candidate) =>
-                  candidate.name === item.name &&
-                  candidate.text === item.text &&
-                  candidate.damage === item.damage &&
-                  candidate.cost.join(",") === item.cost.join(","),
-              ) === index,
-          );
-          const features = [
-            ...(details.cardFeatureItemList ?? []).map((item) => ({
-              name: item.featureName ?? "特性",
-              text: normalizeText(item.featureDesc),
-            })),
-            ...((details.skills ?? [])
-              .filter((item) => item?.type === "feature")
-              .map((item) => ({
-                name: item.name ?? "特性",
-                text: normalizeText(item.desc),
-              }))),
-            ...(cardTypeCode === "1" && specialCardCodes.includes("6")
-              ? [
-                  {
-                    name: "太晶规则",
-                    text: "只要这只宝可梦处于备战区，就不会受到招式的伤害。",
-                  },
-                ]
-              : []),
-          ].filter(
-            (item, index, array) =>
-              array.findIndex(
-                (candidate) => candidate.name === item.name && candidate.text === item.text,
-              ) === index,
-          );
+        if (!logicalCardIdByFingerprint.has(fingerprint)) {
+          logicalCardIdByFingerprint.set(fingerprint, logicalCardId);
+
           const illustrators = details.illustratorName ?? [];
           const searchText = [
             name,
@@ -441,15 +557,10 @@ export async function importJsonToSqlite() {
             .trim();
 
           insertCard.run(
-            rawCard.id,
+            logicalCardId,
+            fingerprint,
             name,
             rawCard.yorenCode ?? null,
-            details.collectionNumber ?? "",
-            parseNumericCollectionNumber(details.collectionNumber),
-            details.commodityCode ?? rawCard.commodityCode ?? null,
-            imagePath,
-            buildCardImageUrlFromPath(imagePath),
-            rawCard.hash ?? null,
             cardTypeCode,
             details.cardTypeText ?? dictMaps.cardType.get(cardTypeCode) ?? cardTypeCode,
             trainerTypeCode,
@@ -462,18 +573,11 @@ export async function importJsonToSqlite() {
             specialCardLabel,
             attributeCode,
             attributeCode ? (dictMaps.attribute.get(attributeCode) ?? attributeCode) : null,
-            details.regulationMarkText ?? null,
-            details.rarity ?? null,
-            details.rarityText ?? null,
             details.hp ?? null,
             details.evolveText ?? null,
             ruleText || null,
-            details.weaknessType && details.weaknessFormula
-              ? `${dictMaps.weaknessType.get(details.weaknessType) ?? details.weaknessType} ${details.weaknessFormula}`
-              : null,
-            details.resistanceType && details.resistanceFormula
-              ? `${dictMaps.resistanceType.get(details.resistanceType) ?? details.resistanceType} ${details.resistanceFormula}`
-              : null,
+            weakness,
+            resistance,
             details.retreatCost ?? null,
             details.pokemonCategory ?? null,
             details.pokedexCode ?? null,
@@ -483,18 +587,22 @@ export async function importJsonToSqlite() {
             JSON.stringify(illustrators),
             searchText,
             detectDeckRuleLimit(ruleText, pokemonTypeLabel, specialCardLabel),
+            rawCard.id,
+            buildCardImageUrlFromPath(imagePath),
+            details.collectionNumber ?? "",
+            parseNumericCollectionNumber(details.collectionNumber),
           );
 
           attacks.forEach((item, index) => {
-            insertAttack.run(rawCard.id, index, item.name, item.text, JSON.stringify(item.cost), item.damage);
+            insertAttack.run(logicalCardId, index, item.name, item.text, JSON.stringify(item.cost), item.damage);
           });
 
           features.forEach((item, index) => {
-            insertFeature.run(rawCard.id, index, item.name, item.text);
+            insertFeature.run(logicalCardId, index, item.name, item.text);
           });
 
           insertSearch.run(
-            rawCard.id,
+            logicalCardId,
             name,
             ruleText,
             attacks.map((item) => `${item.name} ${item.text}`).join(" "),
@@ -502,6 +610,24 @@ export async function importJsonToSqlite() {
             commodityList.map((item) => item.commodityName).join(" "),
             illustrators.join(" "),
             normalizeText(details.pokedexText),
+          );
+        }
+
+        if (!insertedPrintingIds.has(rawCard.id)) {
+          insertedPrintingIds.add(rawCard.id);
+          const imagePath = sanitizeImagePath(rawCard.image);
+          insertCardPrinting.run(
+            rawCard.id,
+            logicalCardId,
+            details.commodityCode ?? rawCard.commodityCode ?? null,
+            imagePath,
+            buildCardImageUrlFromPath(imagePath),
+            rawCard.hash ?? null,
+            details.collectionNumber ?? "",
+            parseNumericCollectionNumber(details.collectionNumber),
+            details.regulationMarkText ?? null,
+            details.rarity ?? null,
+            details.rarityText ?? null,
           );
         }
 
