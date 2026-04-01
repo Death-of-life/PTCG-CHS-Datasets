@@ -22,11 +22,12 @@ This repository now includes a Next.js web app backed by SQLite instead of loadi
 ### Features
 
 - JSON import into SQLite with Drizzle schema
-- Full-text and fallback substring search
+- Merge same-name + same-effect cards into one logical card with multiple printings
+- Full-text and fallback substring search for name/rules/attacks/features only
 - Multi-select filters with same-group OR and cross-group AND semantics
 - Separate `/cards` database browser and `/decks` deck builder pages
 - OpenAPI document and Swagger UI at `/api/docs`
-- Card image streaming API for external software
+- R2-backed card images and printing-aware card detail API
 
 ### Getting Started
 
@@ -82,6 +83,21 @@ Multi-select query params use repeated keys:
 ```bash
 curl "http://localhost:3000/api/v1/cards?q=喷火龙&regulationMark[]=G&regulationMark[]=H&attribute[]=2&page=1&pageSize=12"
 ```
+
+`/api/v1/cards` and `/api/v1/cards/:id` now return logical cards. The top-level `id` is the logical card ID, while `printings[].id` is the concrete printed-card ID. Search no longer matches collection / expansion names.
+
+Deck validation also uses logical card IDs:
+
+```json
+{
+  "entries": [
+    { "logicalCardId": 123, "quantity": 4 },
+    { "logicalCardId": 456, "quantity": 2 }
+  ]
+}
+```
+
+`GET /api/v1/cards/:id/image` is kept as a compatibility endpoint and redirects to the default printing image stored on R2.
 
 The complete machine-readable contract is available at `/api/openapi.json`, and the interactive documentation is available at `/api/docs`.
 

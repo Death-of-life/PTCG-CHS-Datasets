@@ -32,13 +32,25 @@ type MetaPayload = {
   };
 };
 
-type CardListItem = {
+type CardPrinting = {
   id: number;
-  name: string;
   imageUrl: string;
   collectionNumber: string;
   collectionName: string;
   collectionId: number;
+  collectionNames: string[];
+  collectionIds: number[];
+  regulationMark?: string | null;
+  rarityCode?: string | null;
+  rarityLabel?: string | null;
+};
+
+type CardListItem = {
+  id: number;
+  name: string;
+  imageUrl: string;
+  printCount: number;
+  printings: CardPrinting[];
   cardTypeCode: string;
   cardTypeLabel: string;
   attributeCode?: string | null;
@@ -51,9 +63,6 @@ type CardListItem = {
   pokemonTypeLabel?: string | null;
   specialCardCode?: string | null;
   specialCardLabel?: string | null;
-  regulationMark?: string | null;
-  rarityCode?: string | null;
-  rarityLabel?: string | null;
   hp?: number | null;
   evolveText?: string | null;
 };
@@ -98,7 +107,7 @@ type SearchResponse = {
 };
 
 type DeckEntry = {
-  cardId: number;
+  logicalCardId: number;
   quantity: number;
 };
 
@@ -122,7 +131,7 @@ const emptyValidation: DeckValidationResult = {
   isValid: false,
 };
 
-const deckStorageKey = "ptcg-deck-builder-v2";
+const deckStorageKey = "ptcg-deck-builder-v3";
 
 type Props = {
   mode: "browse" | "deck";
@@ -138,7 +147,8 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
     pagination: { page: 1, pageSize: 24, total: 0, totalPages: 1 },
   });
   const [page, setPage] = useState(1);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedLogicalCardId, setSelectedLogicalCardId] = useState<number | null>(null);
+  const [selectedPrintingId, setSelectedPrintingId] = useState<number | null>(null);
   const [selectedCard, setSelectedCard] = useState<CardDetail | null>(null);
   const [loadingCards, setLoadingCards] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -154,7 +164,7 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
   });
   const [validation, setValidation] = useState<DeckValidationResult>(emptyValidation);
   const [cardCache, setCardCache] = useState<Record<number, CardListItem | CardDetail>>({});
-  const selectedIdRef = useRef<number | null>(null);
+  const selectedLogicalCardIdRef = useRef<number | null>(null);
 
   const [filters, setFilters] = useState({
     cardType: [] as string[],
@@ -167,6 +177,26 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
     rarity: [] as string[],
     collectionId: [] as string[],
   });
+
+  const activePrinting = useMemo(() => {
+    if (!selectedCard) return null;
+    return (
+      selectedCard.printings.find((printing) => printing.id === selectedPrintingId) ??
+      selectedCard.printings[0] ??
+      null
+    );
+  }, [selectedCard, selectedPrintingId]);
+
+  const deckCards = useMemo(
+    () =>
+      deck
+        .map((entry) => ({
+          ...entry,
+          card: cardCache[entry.logicalCardId] ?? null,
+        }))
+        .sort((left, right) => left.logicalCardId - right.logicalCardId),
+    [cardCache, deck],
+  );
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -224,15 +254,18 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
         });
 
         if (!payload.items.length) {
-          setSelectedId(null);
+          setSelectedLogicalCardId(null);
+          setSelectedPrintingId(null);
           setSelectedCard(null);
           return;
         }
 
-        const stillVisible = payload.items.some((item) => item.id === selectedIdRef.current);
+        const stillVisible = payload.items.some((item) => item.id === selectedLogicalCardIdRef.current);
         if (!stillVisible) {
+          const firstCard = payload.items[0];
           setLoadingDetail(true);
-          setSelectedId(payload.items[0].id);
+          setSelectedLogicalCardId(firstCard.id);
+          setSelectedPrintingId(firstCard.printings[0]?.id ?? null);
         }
       })
       .catch((error) => {
@@ -245,21 +278,27 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
   }, [debouncedQuery, filters, page]);
 
   useEffect(() => {
-    selectedIdRef.current = selectedId;
-  }, [selectedId]);
+    selectedLogicalCardIdRef.current = selectedLogicalCardId;
+  }, [selectedLogicalCardId]);
 
   useEffect(() => {
-    if (!selectedId) {
+    if (!selectedLogicalCardId) {
       return;
     }
 
     const controller = new AbortController();
 
-    fetch(`/api/v1/cards/${selectedId}`, { signal: controller.signal })
+    fetch(`/api/v1/cards/${selectedLogicalCardId}`, { signal: controller.signal })
       .then((response) => response.json())
       .then((payload: CardDetail) => {
         setSelectedCard(payload);
         setCardCache((current) => ({ ...current, [payload.id]: payload }));
+        setSelectedPrintingId((currentPrintingId) => {
+          if (currentPrintingId && payload.printings.some((printing) => printing.id === currentPrintingId)) {
+            return currentPrintingId;
+          }
+          return payload.printings[0]?.id ?? null;
+        });
         setLoadingDetail(false);
       })
       .catch((error) => {
@@ -269,7 +308,7 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
       });
 
     return () => controller.abort();
-  }, [selectedId]);
+  }, [selectedLogicalCardId]);
 
   useEffect(() => {
     if (typeof window === "undefined" || mode !== "deck") return;
@@ -288,17 +327,6 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
 
     return () => controller.abort();
   }, [deck, mode]);
-
-  const deckCards = useMemo(
-    () =>
-      deck
-        .map((entry) => ({
-          ...entry,
-          card: cardCache[entry.cardId] ?? null,
-        }))
-        .sort((left, right) => left.cardId - right.cardId),
-    [cardCache, deck],
-  );
 
   function toggleFilter(group: keyof typeof filters, value: string) {
     setLoadingCards(true);
@@ -332,24 +360,24 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
     });
   }
 
-  function addCard(cardId: number) {
+  function addCard(logicalCardId: number) {
     setDeck((current) => {
-      const existing = current.find((item) => item.cardId === cardId);
+      const existing = current.find((item) => item.logicalCardId === logicalCardId);
       if (existing) {
         return current.map((item) =>
-          item.cardId === cardId ? { ...item, quantity: item.quantity + 1 } : item,
+          item.logicalCardId === logicalCardId ? { ...item, quantity: item.quantity + 1 } : item,
         );
       }
 
-      return [...current, { cardId, quantity: 1 }];
+      return [...current, { logicalCardId, quantity: 1 }];
     });
   }
 
-  function removeCard(cardId: number) {
+  function removeCard(logicalCardId: number) {
     setDeck((current) =>
       current
         .map((item) =>
-          item.cardId === cardId ? { ...item, quantity: item.quantity - 1 } : item,
+          item.logicalCardId === logicalCardId ? { ...item, quantity: item.quantity - 1 } : item,
         )
         .filter((item) => item.quantity > 0),
     );
@@ -360,9 +388,9 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
       <header className={styles.hero}>
         <div>
           <p className={styles.eyebrow}>PTCG CHS DATABASE</p>
-          <h1>{mode === "deck" ? "牌组编辑器" : "卡牌数据库"}</h1>
+          <h1>{mode === "deck" ? "牌组编辑器" : "逻辑卡数据库"}</h1>
           <p className={styles.heroText}>
-            SQLite 驱动搜索、多选筛选、OpenAPI 文档、图片接口与独立牌组编辑。
+            同名同效果的卡牌已合并为逻辑卡，详情区可切换不同拓展包与不同卡面的印刷版本。
           </p>
         </div>
         <nav className={styles.nav}>
@@ -378,7 +406,7 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
         </nav>
         <div className={styles.heroStats}>
           <div>
-            <span>卡牌总数</span>
+            <span>逻辑卡总数</span>
             <strong>{meta?.summary.totalCards ?? initialSummary.totalCards}</strong>
           </div>
           <div>
@@ -398,7 +426,7 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
             <input
               className={styles.searchInput}
               value={query}
-              placeholder="搜索卡名、规则文本、招式、特性、卡包、插画师"
+              placeholder="搜索卡名、规则文本、招式、特性、插画师、图鉴"
               onChange={(event) => {
                 setLoadingCards(true);
                 setPage(1);
@@ -434,7 +462,7 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
                   上一页
                 </button>
                 <span>
-                  {results.pagination.page} / {results.pagination.totalPages} · {results.pagination.total} 张
+                  {results.pagination.page} / {results.pagination.totalPages} · {results.pagination.total} 张逻辑卡
                 </span>
                 <button
                   disabled={results.pagination.page >= results.pagination.totalPages}
@@ -452,39 +480,44 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
               <div className={styles.emptyState}>正在查询数据库……</div>
             ) : (
               <div className={styles.cardGrid}>
-                {results.items.map((card) => (
-                  <article
-                    key={card.id}
-                    className={`${styles.card} ${selectedId === card.id ? styles.cardSelected : ""}`}
-                  >
-                    <button
-                      className={styles.cardButton}
-                      onClick={() => {
-                        setLoadingDetail(true);
-                        setSelectedId(card.id);
-                      }}
+                {results.items.map((card) => {
+                  const primaryPrinting = card.printings[0] ?? null;
+
+                  return (
+                    <article
+                      key={card.id}
+                      className={`${styles.card} ${selectedLogicalCardId === card.id ? styles.cardSelected : ""}`}
                     >
-                      <Image alt={card.name} src={card.imageUrl} width={320} height={447} unoptimized className={styles.cardImage} />
-                      <div className={styles.cardBody}>
-                        <strong>{card.name}</strong>
-                        <span>{card.collectionNumber}</span>
-                        <span>{card.collectionName}</span>
-                        <div className={styles.tagRow}>
-                          <Tag text={card.cardTypeLabel} />
-                          {card.attributeLabel ? <Tag text={card.attributeLabel} /> : null}
-                          {card.pokemonTypeLabel ? <Tag text={card.pokemonTypeLabel} /> : null}
-                          {card.specialCardLabel ? <Tag text={card.specialCardLabel} /> : null}
-                          {card.regulationMark ? <Tag text={`Reg ${card.regulationMark}`} /> : null}
+                      <button
+                        className={styles.cardButton}
+                        onClick={() => {
+                          setLoadingDetail(true);
+                          setSelectedLogicalCardId(card.id);
+                          setSelectedPrintingId(primaryPrinting?.id ?? null);
+                        }}
+                      >
+                        <Image alt={card.name} src={card.imageUrl} width={320} height={447} unoptimized className={styles.cardImage} />
+                        <div className={styles.cardBody}>
+                          <strong>{card.name}</strong>
+                          <span>{primaryPrinting ? `${primaryPrinting.collectionName} · ${primaryPrinting.collectionNumber}` : "未标记卡面"}</span>
+                          <span>共 {card.printCount} 个卡面 / 印刷版本</span>
+                          <div className={styles.tagRow}>
+                            <Tag text={card.cardTypeLabel} />
+                            {card.attributeLabel ? <Tag text={card.attributeLabel} /> : null}
+                            {card.pokemonTypeLabel ? <Tag text={card.pokemonTypeLabel} /> : null}
+                            {card.specialCardLabel ? <Tag text={card.specialCardLabel} /> : null}
+                            {primaryPrinting?.regulationMark ? <Tag text={`Reg ${primaryPrinting.regulationMark}`} /> : null}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                    {mode === "deck" ? (
-                      <button className={styles.addButton} onClick={() => addCard(card.id)}>
-                        加入牌组
                       </button>
-                    ) : null}
-                  </article>
-                ))}
+                      {mode === "deck" ? (
+                        <button className={styles.addButton} onClick={() => addCard(card.id)}>
+                          加入牌组
+                        </button>
+                      ) : null}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -494,33 +527,57 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
           <div className={styles.panel}>
             <div className={styles.panelHeader}>
               <h2>卡牌详情</h2>
-              {selectedCard ? <a href={selectedCard.imageUrl}>图片 API</a> : null}
+              {activePrinting ? <a href={activePrinting.imageUrl}>R2 图片</a> : null}
             </div>
             {loadingDetail || !selectedCard ? (
-              <div className={styles.emptyState}>选择一张卡牌查看详情。</div>
+              <div className={styles.emptyState}>选择一张逻辑卡查看详情。</div>
             ) : (
               <div className={styles.detailPanel}>
-                <Image alt={selectedCard.name} src={selectedCard.imageUrl} width={320} height={447} unoptimized className={styles.detailImage} />
+                <Image
+                  alt={selectedCard.name}
+                  src={activePrinting?.imageUrl ?? selectedCard.imageUrl}
+                  width={320}
+                  height={447}
+                  unoptimized
+                  className={styles.detailImage}
+                />
                 <div className={styles.detailMeta}>
                   <h3>{selectedCard.name}</h3>
                   <p>
-                    {selectedCard.collectionName} · {selectedCard.collectionNumber}
+                    {activePrinting
+                      ? `${activePrinting.collectionName} · ${activePrinting.collectionNumber}`
+                      : "未选择卡面"}
                   </p>
+                  <p>共 {selectedCard.printCount} 个卡面 / 印刷版本</p>
                   <div className={styles.tagRow}>
                     <Tag text={selectedCard.cardTypeLabel} />
                     {selectedCard.attributeLabel ? <Tag text={selectedCard.attributeLabel} /> : null}
                     {selectedCard.pokemonTypeLabel ? <Tag text={selectedCard.pokemonTypeLabel} /> : null}
                     {selectedCard.specialCardLabel ? <Tag text={selectedCard.specialCardLabel} /> : null}
-                    {selectedCard.regulationMark ? <Tag text={`规则标 ${selectedCard.regulationMark}`} /> : null}
+                    {activePrinting?.regulationMark ? <Tag text={`规则标 ${activePrinting.regulationMark}`} /> : null}
+                    {activePrinting?.rarityLabel ? <Tag text={activePrinting.rarityLabel} /> : null}
+                  </div>
+                  <div className={styles.printingSwitcher}>
+                    {selectedCard.printings.map((printing) => (
+                      <button
+                        key={printing.id}
+                        className={printing.id === activePrinting?.id ? styles.printingChipActive : styles.printingChip}
+                        onClick={() => setSelectedPrintingId(printing.id)}
+                      >
+                        <strong>{printing.collectionNumber || `卡面 #${printing.id}`}</strong>
+                        <span>{printing.collectionName}</span>
+                      </button>
+                    ))}
                   </div>
                   <dl className={styles.metaGrid}>
                     <div><dt>HP</dt><dd>{selectedCard.hp ?? "-"}</dd></div>
                     <div><dt>阶段</dt><dd>{selectedCard.evolveText ?? "-"}</dd></div>
-                    <div><dt>稀有度</dt><dd>{selectedCard.rarityLabel ?? "-"}</dd></div>
+                    <div><dt>稀有度</dt><dd>{activePrinting?.rarityLabel ?? "-"}</dd></div>
                     <div><dt>弱点</dt><dd>{selectedCard.weakness ?? "-"}</dd></div>
                     <div><dt>抵抗</dt><dd>{selectedCard.resistance ?? "-"}</dd></div>
                     <div><dt>撤退</dt><dd>{selectedCard.retreatCost ?? "-"}</dd></div>
                     <div><dt>插画师</dt><dd>{selectedCard.illustratorNames.join(" / ") || "-"}</dd></div>
+                    <div><dt>收录</dt><dd>{activePrinting?.collectionNames.join(" / ") || "-"}</dd></div>
                   </dl>
                 </div>
                 <DetailSection title="特性 / 机制" items={selectedCard.features.map((feature) => ({ title: feature.name, text: feature.text }))} />
@@ -551,21 +608,30 @@ export function CatalogExperience({ mode, initialSummary }: Props) {
               </div>
               <div className={styles.deckList}>
                 {deckCards.length ? (
-                  deckCards.map((entry) => (
-                    <div key={entry.cardId} className={styles.deckItem}>
-                      <div>
-                        <strong>{entry.card?.name ?? `卡牌 #${entry.cardId}`}</strong>
-                        <span>{entry.card?.collectionNumber ?? ""}</span>
+                  deckCards.map((entry) => {
+                    const card = entry.card;
+                    const primaryPrinting = card?.printings[0];
+
+                    return (
+                      <div key={entry.logicalCardId} className={styles.deckItem}>
+                        <div>
+                          <strong>{card?.name ?? `逻辑卡 #${entry.logicalCardId}`}</strong>
+                          <span>
+                            {primaryPrinting
+                              ? `${primaryPrinting.collectionName} · ${primaryPrinting.collectionNumber}`
+                              : ""}
+                          </span>
+                        </div>
+                        <div className={styles.deckActions}>
+                          <button onClick={() => removeCard(entry.logicalCardId)}>-</button>
+                          <strong>{entry.quantity}</strong>
+                          <button onClick={() => addCard(entry.logicalCardId)}>+</button>
+                        </div>
                       </div>
-                      <div className={styles.deckActions}>
-                        <button onClick={() => removeCard(entry.cardId)}>-</button>
-                        <strong>{entry.quantity}</strong>
-                        <button onClick={() => addCard(entry.cardId)}>+</button>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 ) : (
-                  <div className={styles.emptyState}>从左侧结果列表加入卡牌。</div>
+                  <div className={styles.emptyState}>从左侧结果列表加入逻辑卡。</div>
                 )}
               </div>
               <div className={styles.validationList}>

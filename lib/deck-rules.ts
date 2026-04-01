@@ -1,5 +1,5 @@
 export type DeckEntry = {
-  cardId: number;
+  logicalCardId: number;
   quantity: number;
 };
 
@@ -58,12 +58,12 @@ export function validateDeck(
 
   for (const entry of entries) {
     totalCards += entry.quantity;
-    const card = cardMap.get(entry.cardId);
+    const card = cardMap.get(entry.logicalCardId);
 
     if (!card) {
       issues.push({
         code: "unknown-card",
-        message: `牌组中存在未知卡牌 ID：${entry.cardId}。`,
+        message: `牌组中存在未知逻辑卡 ID：${entry.logicalCardId}。`,
         level: "error",
       });
       continue;
@@ -107,7 +107,7 @@ export function validateDeck(
   const byName = new Map<string, { quantity: number; card: DeckValidationCard }>();
 
   for (const entry of entries) {
-    const card = cardMap.get(entry.cardId);
+    const card = cardMap.get(entry.logicalCardId);
     if (!card) {
       continue;
     }

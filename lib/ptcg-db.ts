@@ -1,9 +1,5 @@
-import path from "node:path";
-
 import { ensureDatabaseReady } from "@/lib/db/importer";
 import { getSqlite } from "@/lib/db/connection";
-
-const R2_PUBLIC_BASE_URL = "https://pub-a275b3fdda064fe5a8c45a3a5afb1266.r2.dev";
 
 export type FilterOption = {
   code: string;
@@ -27,13 +23,25 @@ export type SearchParams = {
   collectionIds: string[];
 };
 
-export type CardListItem = {
+export type CardPrinting = {
   id: number;
-  name: string;
   imageUrl: string;
   collectionNumber: string;
   collectionName: string;
   collectionId: number;
+  collectionNames: string[];
+  collectionIds: number[];
+  regulationMark?: string | null;
+  rarityCode?: string | null;
+  rarityLabel?: string | null;
+};
+
+export type CardListItem = {
+  id: number;
+  name: string;
+  imageUrl: string;
+  printCount: number;
+  printings: CardPrinting[];
   cardTypeCode: string;
   cardTypeLabel: string;
   attributeCode?: string | null;
@@ -46,9 +54,6 @@ export type CardListItem = {
   pokemonTypeLabel?: string | null;
   specialCardCode?: string | null;
   specialCardLabel?: string | null;
-  regulationMark?: string | null;
-  rarityCode?: string | null;
-  rarityLabel?: string | null;
   hp?: number | null;
   evolveText?: string | null;
 };
@@ -154,23 +159,109 @@ async function readyDb() {
   return getSqlite();
 }
 
-export function buildCardImageUrlFromPath(imagePath: string | null | undefined) {
-  const normalizedPath = (imagePath ?? "").replaceAll("\\", "/").replace(/^\/+/, "");
-  const relativePath = normalizedPath.replace(/^img\//, "");
-  return relativePath ? `${R2_PUBLIC_BASE_URL}/${relativePath}` : "";
+function mapPrintingRows(rows: Array<Record<string, RowValue>>) {
+  const printings: CardPrinting[] = [];
+  const byPrintingId = new Map<number, CardPrinting>();
+
+  for (const row of rows) {
+    const printingId = Number(row.printing_id);
+    let printing = byPrintingId.get(printingId);
+
+    if (!printing) {
+      printing = {
+        id: printingId,
+        imageUrl: String(row.image_url ?? ""),
+        collectionNumber: String(row.collection_number ?? ""),
+        collectionName: String(row.collection_name ?? ""),
+        collectionId: Number(row.collection_id ?? 0),
+        collectionNames: [],
+        collectionIds: [],
+        regulationMark: (row.regulation_mark as string | null) ?? null,
+        rarityCode: (row.rarity_code as string | null) ?? null,
+        rarityLabel: (row.rarity_label as string | null) ?? null,
+      };
+      byPrintingId.set(printingId, printing);
+      printings.push(printing);
+    }
+
+    const collectionId = Number(row.collection_id ?? 0);
+    const collectionName = String(row.collection_name ?? "");
+
+    if (collectionId > 0 && !printing.collectionIds.includes(collectionId)) {
+      printing.collectionIds.push(collectionId);
+    }
+
+    if (collectionName && !printing.collectionNames.includes(collectionName)) {
+      printing.collectionNames.push(collectionName);
+    }
+  }
+
+  return printings;
 }
 
-function mapCardListRow(row: Record<string, RowValue>) {
-  const imagePath = (row.image_path as string | null) ?? null;
-  const imageUrl = buildCardImageUrlFromPath(imagePath) || String(row.image_url ?? "");
+async function getPrintingsMap(cardIds: number[]) {
+  const printingsMap = new Map<number, CardPrinting[]>();
 
+  if (!cardIds.length) {
+    return printingsMap;
+  }
+
+  const db = await readyDb();
+  const rows = db
+    .prepare(
+      `
+        SELECT
+          cp.card_id,
+          cp.id AS printing_id,
+          cp.image_url,
+          cp.collection_number,
+          cp.regulation_mark,
+          cp.rarity_code,
+          cp.rarity_label,
+          COALESCE(cc.collection_id, 0) AS collection_id,
+          COALESCE(collections.name, '') AS collection_name
+        FROM card_printings cp
+        LEFT JOIN card_collections cc ON cc.printing_id = cp.id
+        LEFT JOIN collections ON collections.id = cc.collection_id
+        WHERE cp.card_id IN (${buildPlaceholders(cardIds)})
+        ORDER BY
+          cp.card_id ASC,
+          CASE WHEN cp.collection_number_numeric IS NULL THEN 1 ELSE 0 END ASC,
+          cp.collection_number_numeric ASC,
+          cp.collection_number ASC,
+          cp.id ASC,
+          cc.id ASC
+      `,
+    )
+    .all(...cardIds) as Array<Record<string, RowValue>>;
+
+  const groupedRows = new Map<number, Array<Record<string, RowValue>>>();
+
+  for (const row of rows) {
+    const cardId = Number(row.card_id);
+    const bucket = groupedRows.get(cardId);
+
+    if (bucket) {
+      bucket.push(row);
+    } else {
+      groupedRows.set(cardId, [row]);
+    }
+  }
+
+  for (const [cardId, grouped] of groupedRows) {
+    printingsMap.set(cardId, mapPrintingRows(grouped));
+  }
+
+  return printingsMap;
+}
+
+function mapCardListRow(row: Record<string, RowValue>, printings: CardPrinting[]) {
   return {
     id: Number(row.id),
     name: String(row.name),
-    imageUrl,
-    collectionNumber: String(row.collection_number),
-    collectionName: String(row.collection_name),
-    collectionId: Number(row.collection_id),
+    imageUrl: String(row.default_image_url ?? printings[0]?.imageUrl ?? ""),
+    printCount: printings.length,
+    printings,
     cardTypeCode: String(row.card_type_code),
     cardTypeLabel: String(row.card_type_label),
     attributeCode: (row.attribute_code as string | null) ?? null,
@@ -183,9 +274,6 @@ function mapCardListRow(row: Record<string, RowValue>) {
     pokemonTypeLabel: (row.pokemon_type_label as string | null) ?? null,
     specialCardCode: (row.special_card_code as string | null) ?? null,
     specialCardLabel: (row.special_card_label as string | null) ?? null,
-    regulationMark: (row.regulation_mark as string | null) ?? null,
-    rarityCode: (row.rarity_code as string | null) ?? null,
-    rarityLabel: (row.rarity_label as string | null) ?? null,
     hp: (row.hp as number | null) ?? null,
     evolveText: (row.evolve_text as string | null) ?? null,
   } satisfies CardListItem;
@@ -229,20 +317,54 @@ function buildBaseFilters(
     values.push(matchQuery, likeValue);
   }
 
-  if (excludedGroup !== "cardTypeCodes") addInFilter(conditions, values, "cards.card_type_code", params.cardTypeCodes);
-  if (excludedGroup !== "attributeCodes") addInFilter(conditions, values, "cards.attribute_code", params.attributeCodes);
-  if (excludedGroup !== "trainerTypeCodes") addInFilter(conditions, values, "cards.trainer_type_code", params.trainerTypeCodes);
-  if (excludedGroup !== "energyTypeCodes") addInFilter(conditions, values, "cards.energy_type_code", params.energyTypeCodes);
-  if (excludedGroup !== "pokemonTypeCodes") addInFilter(conditions, values, "cards.pokemon_type_code", params.pokemonTypeCodes);
-  if (excludedGroup !== "specialCardCodes") addInFilter(conditions, values, "cards.special_card_code", params.specialCardCodes);
-  if (excludedGroup !== "regulationMarks") addInFilter(conditions, values, "cards.regulation_mark", params.regulationMarks);
-  if (excludedGroup !== "rarityCodes") addInFilter(conditions, values, "cards.rarity_code", params.rarityCodes);
+  if (excludedGroup !== "cardTypeCodes") {
+    addInFilter(conditions, values, "cards.card_type_code", params.cardTypeCodes);
+  }
+  if (excludedGroup !== "attributeCodes") {
+    addInFilter(conditions, values, "cards.attribute_code", params.attributeCodes);
+  }
+  if (excludedGroup !== "trainerTypeCodes") {
+    addInFilter(conditions, values, "cards.trainer_type_code", params.trainerTypeCodes);
+  }
+  if (excludedGroup !== "energyTypeCodes") {
+    addInFilter(conditions, values, "cards.energy_type_code", params.energyTypeCodes);
+  }
+  if (excludedGroup !== "pokemonTypeCodes") {
+    addInFilter(conditions, values, "cards.pokemon_type_code", params.pokemonTypeCodes);
+  }
+  if (excludedGroup !== "specialCardCodes") {
+    addInFilter(conditions, values, "cards.special_card_code", params.specialCardCodes);
+  }
+
+  if (excludedGroup !== "regulationMarks" && params.regulationMarks.length) {
+    conditions.push(
+      `EXISTS (
+        SELECT 1 FROM card_printings cp
+        WHERE cp.card_id = cards.id
+        AND cp.regulation_mark IN (${buildPlaceholders(params.regulationMarks)})
+      )`,
+    );
+    values.push(...params.regulationMarks);
+  }
+
+  if (excludedGroup !== "rarityCodes" && params.rarityCodes.length) {
+    conditions.push(
+      `EXISTS (
+        SELECT 1 FROM card_printings cp
+        WHERE cp.card_id = cards.id
+        AND cp.rarity_code IN (${buildPlaceholders(params.rarityCodes)})
+      )`,
+    );
+    values.push(...params.rarityCodes);
+  }
 
   if (excludedGroup !== "collectionIds" && params.collectionIds.length) {
     conditions.push(
       `EXISTS (
-        SELECT 1 FROM card_collections cc
-        WHERE cc.card_id = cards.id
+        SELECT 1
+        FROM card_printings cp
+        JOIN card_collections cc ON cc.printing_id = cp.id
+        WHERE cp.card_id = cards.id
         AND cc.collection_id IN (${buildPlaceholders(params.collectionIds)})
       )`,
     );
@@ -263,10 +385,7 @@ async function getFacetCounts(
     | "trainerTypeCodes"
     | "energyTypeCodes"
     | "pokemonTypeCodes"
-    | "specialCardCodes"
-    | "regulationMarks"
-    | "rarityCodes"
-    | "collectionIds",
+    | "specialCardCodes",
   sqlExpression: string,
 ) {
   const db = await readyDb();
@@ -275,10 +394,32 @@ async function getFacetCounts(
   const rows = db
     .prepare(`
       SELECT ${sqlExpression} as code, COUNT(DISTINCT cards.id) as count
-      FROM card_search_index cards
+      FROM cards
       ${whereClause}
       GROUP BY ${sqlExpression}
       HAVING ${sqlExpression} IS NOT NULL AND ${sqlExpression} != ''
+    `)
+    .all(...values) as Array<{ code: string; count: number }>;
+
+  return new Map(rows.map((row) => [String(row.code), Number(row.count)]));
+}
+
+async function getPrintingFacetCounts(
+  params: SearchParams,
+  group: "regulationMarks" | "rarityCodes",
+  column: "regulation_mark" | "rarity_code",
+) {
+  const db = await readyDb();
+  const { whereClause, values } = buildBaseFilters(params, group);
+
+  const rows = db
+    .prepare(`
+      SELECT cp.${column} as code, COUNT(DISTINCT cards.id) as count
+      FROM cards
+      JOIN card_printings cp ON cp.card_id = cards.id
+      ${whereClause}
+      GROUP BY cp.${column}
+      HAVING cp.${column} IS NOT NULL AND cp.${column} != ''
     `)
     .all(...values) as Array<{ code: string; count: number }>;
 
@@ -292,8 +433,9 @@ async function getCollectionFacetCounts(params: SearchParams) {
   const rows = db
     .prepare(`
       SELECT CAST(cc.collection_id AS TEXT) as code, COUNT(DISTINCT cards.id) as count
-      FROM card_search_index cards
-      JOIN card_collections cc ON cc.card_id = cards.id
+      FROM cards
+      JOIN card_printings cp ON cp.card_id = cards.id
+      JOIN card_collections cc ON cc.printing_id = cp.id
       ${whereClause}
       GROUP BY cc.collection_id
     `)
@@ -308,10 +450,14 @@ export async function searchCards(params: SearchParams): Promise<SearchResponse>
   const orderClause =
     params.sort === "nameAsc"
       ? "ORDER BY cards.name COLLATE NOCASE ASC, cards.id ASC"
-      : "ORDER BY cards.collection_number_numeric ASC, cards.collection_number ASC, cards.id ASC";
+      : `ORDER BY
+          CASE WHEN cards.sort_collection_number_numeric IS NULL THEN 1 ELSE 0 END ASC,
+          cards.sort_collection_number_numeric ASC,
+          cards.sort_collection_number ASC,
+          cards.id ASC`;
 
   const countRow = db
-    .prepare(`SELECT COUNT(*) as total FROM card_search_index cards ${whereClause}`)
+    .prepare(`SELECT COUNT(*) as total FROM cards ${whereClause}`)
     .get(...values) as { total: number };
 
   const total = countRow.total;
@@ -322,15 +468,18 @@ export async function searchCards(params: SearchParams): Promise<SearchResponse>
   const rows = db
     .prepare(`
       SELECT *
-      FROM card_search_index cards
+      FROM cards
       ${whereClause}
       ${orderClause}
       LIMIT ? OFFSET ?
     `)
     .all(...values, params.pageSize, offset) as Array<Record<string, RowValue>>;
 
+  const cardIds = rows.map((row) => Number(row.id));
+  const printingsMap = await getPrintingsMap(cardIds);
+
   return {
-    items: rows.map(mapCardListRow),
+    items: rows.map((row) => mapCardListRow(row, printingsMap.get(Number(row.id)) ?? [])),
     pagination: {
       page,
       pageSize: params.pageSize,
@@ -355,9 +504,7 @@ export async function searchCards(params: SearchParams): Promise<SearchResponse>
 
 export async function getCardById(id: number): Promise<CardDetail | null> {
   const db = await readyDb();
-  const row = db
-    .prepare("SELECT * FROM card_search_index WHERE id = ?")
-    .get(id) as Record<string, RowValue> | undefined;
+  const row = db.prepare("SELECT * FROM cards WHERE id = ?").get(id) as Record<string, RowValue> | undefined;
 
   if (!row) {
     return null;
@@ -369,12 +516,24 @@ export async function getCardById(id: number): Promise<CardDetail | null> {
   const features = db
     .prepare("SELECT * FROM card_features WHERE card_id = ? ORDER BY sort_order ASC, id ASC")
     .all(id) as Array<Record<string, RowValue>>;
-  const collectionRows = db
-    .prepare("SELECT commodity_code, commodity_name FROM card_collections WHERE card_id = ? ORDER BY id ASC")
+  const commodityRows = db
+    .prepare(`
+      SELECT
+        MIN(cc.id) AS first_id,
+        cc.commodity_code,
+        cc.commodity_name
+      FROM card_printings cp
+      JOIN card_collections cc ON cc.printing_id = cp.id
+      WHERE cp.card_id = ?
+      GROUP BY cc.commodity_code, cc.commodity_name
+      ORDER BY first_id ASC
+    `)
     .all(id) as Array<Record<string, RowValue>>;
+  const printingsMap = await getPrintingsMap([id]);
+  const printings = printingsMap.get(id) ?? [];
 
   return {
-    ...mapCardListRow(row),
+    ...mapCardListRow(row, printings),
     yorenCode: (row.yoren_code as string | null) ?? null,
     ruleLines: splitRuleText((row.rule_text as string | null) ?? null),
     attacks: attacks.map((attack) => ({
@@ -398,22 +557,19 @@ export async function getCardById(id: number): Promise<CardDetail | null> {
     pokedexText: (row.pokedex_text as string | null) ?? null,
     height: (row.height as number | null) ?? null,
     weight: (row.weight as number | null) ?? null,
-    commodityCodes: collectionRows.map((item) => String(item.commodity_code ?? "")),
-    commodityNames: collectionRows.map((item) => String(item.commodity_name)),
+    commodityCodes: commodityRows.map((item) => String(item.commodity_code ?? "")),
+    commodityNames: commodityRows.map((item) => String(item.commodity_name)),
     deckRuleLimit: (row.deck_rule_limit as number | null) ?? null,
   };
 }
 
-export async function getCardImagePath(id: number) {
+export async function getCardImageUrl(id: number) {
   const db = await readyDb();
   const row = db
-    .prepare("SELECT image_path FROM cards WHERE id = ?")
-    .get(id) as { image_path?: string } | undefined;
+    .prepare("SELECT default_image_url FROM cards WHERE id = ?")
+    .get(id) as { default_image_url?: string | null } | undefined;
 
-  if (!row?.image_path) return null;
-
-  const relativePath = row.image_path.replace(/^img\//, "");
-  return path.join(/* turbopackIgnore: true */ process.cwd(), "img", relativePath);
+  return row?.default_image_url ?? null;
 }
 
 async function getDictOptions(typeCode: string) {
@@ -439,18 +595,19 @@ export async function getMeta(params?: SearchParams): Promise<MetaPayload> {
     .get() as { totalCards: number; totalCollections: number };
   const collections = db
     .prepare(`
-      SELECT collections.id as code, collections.name || ' (' || COUNT(card_collections.card_id) || ')' as label
+      SELECT collections.id as code, collections.name || ' (' || COUNT(DISTINCT cp.card_id) || ')' as label
       FROM collections
-      LEFT JOIN card_collections ON card_collections.collection_id = collections.id
+      LEFT JOIN card_collections cc ON cc.collection_id = collections.id
+      LEFT JOIN card_printings cp ON cp.id = cc.printing_id
       GROUP BY collections.id
-      HAVING COUNT(card_collections.card_id) > 0
+      HAVING COUNT(cc.printing_id) > 0
       ORDER BY collections.id DESC
     `)
     .all() as Array<{ code: number; label: string }>;
   const regulationMarks = db
     .prepare(`
       SELECT DISTINCT regulation_mark as code, regulation_mark as label
-      FROM cards
+      FROM card_printings
       WHERE regulation_mark IS NOT NULL AND regulation_mark != ''
       ORDER BY regulation_mark ASC
     `)
@@ -490,8 +647,8 @@ export async function getMeta(params?: SearchParams): Promise<MetaPayload> {
     getFacetCounts(baseParams, "energyTypeCodes", "cards.energy_type_code"),
     getFacetCounts(baseParams, "pokemonTypeCodes", "cards.pokemon_type_code"),
     getFacetCounts(baseParams, "specialCardCodes", "cards.special_card_code"),
-    getFacetCounts(baseParams, "regulationMarks", "cards.regulation_mark"),
-    getFacetCounts(baseParams, "rarityCodes", "cards.rarity_code"),
+    getPrintingFacetCounts(baseParams, "regulationMarks", "regulation_mark"),
+    getPrintingFacetCounts(baseParams, "rarityCodes", "rarity_code"),
     getCollectionFacetCounts(baseParams),
   ]);
 

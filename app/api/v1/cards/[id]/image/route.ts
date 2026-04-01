@@ -1,7 +1,5 @@
-import { readFile } from "node:fs/promises";
-
 import { jsonError } from "@/lib/http";
-import { getCardImagePath } from "@/lib/ptcg-db";
+import { getCardImageUrl } from "@/lib/ptcg-db";
 
 type Params = {
   params: Promise<{ id: string }>;
@@ -9,17 +7,11 @@ type Params = {
 
 export async function GET(_: Request, { params }: Params) {
   const { id } = await params;
-  const imagePath = await getCardImagePath(Number(id));
+  const imageUrl = await getCardImageUrl(Number(id));
 
-  if (!imagePath) {
+  if (!imageUrl) {
     return jsonError(404, "image-not-found", "Card image not found.", { id });
   }
 
-  const data = await readFile(imagePath);
-  return new Response(data, {
-    headers: {
-      "Content-Type": "image/png",
-      "Cache-Control": "public, max-age=86400, immutable",
-    },
-  });
+  return Response.redirect(imageUrl, 307);
 }

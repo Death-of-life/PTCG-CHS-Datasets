@@ -17,15 +17,10 @@ export const collections = sqliteTable("collections", {
 export const cards = sqliteTable(
   "cards",
   {
-    id: integer("id").primaryKey(),
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    fingerprint: text("fingerprint").notNull(),
     name: text("name").notNull(),
     yorenCode: text("yoren_code"),
-    collectionNumber: text("collection_number").notNull(),
-    collectionNumberNumeric: integer("collection_number_numeric"),
-    commodityCode: text("commodity_code"),
-    imagePath: text("image_path").notNull(),
-    imageUrl: text("image_url").notNull(),
-    hash: text("hash"),
     cardTypeCode: text("card_type_code").notNull(),
     cardTypeLabel: text("card_type_label").notNull(),
     trainerTypeCode: text("trainer_type_code"),
@@ -38,9 +33,6 @@ export const cards = sqliteTable(
     specialCardLabel: text("special_card_label"),
     attributeCode: text("attribute_code"),
     attributeLabel: text("attribute_label"),
-    regulationMark: text("regulation_mark"),
-    rarityCode: text("rarity_code"),
-    rarityLabel: text("rarity_label"),
     hp: integer("hp"),
     evolveText: text("evolve_text"),
     ruleText: text("rule_text"),
@@ -55,13 +47,41 @@ export const cards = sqliteTable(
     illustratorsJson: text("illustrators_json").notNull(),
     searchText: text("search_text").notNull(),
     deckRuleLimit: integer("deck_rule_limit"),
+    defaultPrintingId: integer("default_printing_id"),
+    defaultImageUrl: text("default_image_url"),
+    sortCollectionNumber: text("sort_collection_number"),
+    sortCollectionNumberNumeric: integer("sort_collection_number_numeric"),
   },
   (table) => ({
+    fingerprintUnique: uniqueIndex("cards_fingerprint_idx").on(table.fingerprint),
     nameIdx: index("cards_name_idx").on(table.name),
     typeIdx: index("cards_type_idx").on(table.cardTypeCode),
     attributeIdx: index("cards_attribute_idx").on(table.attributeCode),
-    regulationIdx: index("cards_regulation_idx").on(table.regulationMark),
-    collectionNumberIdx: index("cards_collection_number_idx").on(table.collectionNumberNumeric),
+    sortCollectionNumberIdx: index("cards_sort_collection_number_idx").on(
+      table.sortCollectionNumberNumeric,
+    ),
+  }),
+);
+
+export const cardPrintings = sqliteTable(
+  "card_printings",
+  {
+    id: integer("id").primaryKey(),
+    cardId: integer("card_id").notNull(),
+    commodityCode: text("commodity_code"),
+    imagePath: text("image_path").notNull(),
+    imageUrl: text("image_url").notNull(),
+    hash: text("hash"),
+    collectionNumber: text("collection_number").notNull(),
+    collectionNumberNumeric: integer("collection_number_numeric"),
+    regulationMark: text("regulation_mark"),
+    rarityCode: text("rarity_code"),
+    rarityLabel: text("rarity_label"),
+  },
+  (table) => ({
+    cardIdx: index("card_printings_card_idx").on(table.cardId),
+    regulationIdx: index("card_printings_regulation_idx").on(table.regulationMark),
+    rarityIdx: index("card_printings_rarity_idx").on(table.rarityCode),
   }),
 );
 
@@ -69,18 +89,19 @@ export const cardCollections = sqliteTable(
   "card_collections",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    cardId: integer("card_id").notNull(),
+    printingId: integer("printing_id").notNull(),
     collectionId: integer("collection_id").notNull(),
     commodityCode: text("commodity_code"),
     commodityName: text("commodity_name").notNull(),
   },
   (table) => ({
-    cardCollectionUnique: uniqueIndex("card_collections_unique_idx").on(
-      table.cardId,
+    printingCollectionUnique: uniqueIndex("card_collections_unique_idx").on(
+      table.printingId,
       table.collectionId,
       table.commodityCode,
     ),
-    cardIdIdx: index("card_collections_card_idx").on(table.cardId),
+    printingIdIdx: index("card_collections_printing_idx").on(table.printingId),
+    collectionIdIdx: index("card_collections_collection_idx").on(table.collectionId),
   }),
 );
 
@@ -126,6 +147,9 @@ export const dictEntries = sqliteTable(
   },
   (table) => ({
     typeSortIdx: index("dict_entries_type_sort_idx").on(table.typeCode, table.dictSort),
-    typeCodeUnique: uniqueIndex("dict_entries_type_code_unique_idx").on(table.typeCode, table.dictCode),
+    typeCodeUnique: uniqueIndex("dict_entries_type_code_unique_idx").on(
+      table.typeCode,
+      table.dictCode,
+    ),
   }),
 );
