@@ -1,4 +1,4 @@
-![The Brave Shroomish!](/img/11/28.png)
+![The Brave Shroomish!](https://pub-a275b3fdda064fe5a8c45a3a5afb1266.r2.dev/11/28.png)
 
 # PTCG-CHS-Datasets
 
@@ -47,25 +47,27 @@ If `data/ptcg.sqlite` does not exist, the app will lazily build it on first requ
 
 ### Sync Upstream Data
 
-If the upstream Git repository adds new `ptcg_chs_infos.json` content or new images under `img/`, run:
+If the upstream Git repository adds new `ptcg_chs_infos.json` content, run:
 
 ```bash
-npm run data:sync
+npm run sync
 ```
 
 This command will:
 
-1. fetch the latest `origin/main`
-2. update only `ptcg_chs_infos.json` and `img/`
+1. fetch the latest `upstream/main`
+2. update `ptcg_chs_infos.json`
 3. rebuild `data/ptcg.sqlite`
+
+Card image URLs are generated from the JSON image paths and served from Cloudflare R2; the sync command does not need to update local image files.
 
 You can override the source with:
 
 ```bash
-PTCG_SYNC_REMOTE=origin PTCG_SYNC_BRANCH=main npm run data:sync
+PTCG_SYNC_REMOTE=origin PTCG_SYNC_BRANCH=main npm run sync
 ```
 
-If there are local uncommitted changes in `ptcg_chs_infos.json` or `img/`, the sync command will stop instead of overwriting them.
+If there are local uncommitted changes in `ptcg_chs_infos.json`, the sync command will stop instead of overwriting them.
 
 ### API
 
